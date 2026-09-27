@@ -1,0 +1,21 @@
+# dsh-manual-retry bundle patch. Defaults match Pi settings.retry.
+- insert:
+    - id: manual-retry
+      name: "dsh-manual-retry"
+      config:
+        maxRetries: 10
+        nonRetryableErrorPatterns:
+          - quota threshold
+          - 使用上限
+          - insufficient_quota
+          - quota exceeded
+          - quota exhausted
+          - exceeded your current quota
+          - usage limit reached
+          - usage limit exceeded
+          - usage_limit_reached
+          - spending limit reached
+          - insufficient balance
+          - insufficient credits
+          - credit balance is too low
+          - credits exhausted
