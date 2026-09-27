@@ -1,6 +1,6 @@
 {
 	"name": "dsh-manual-retry",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Manual /retry command and non-retryable error patterns for DeepSeek Harness (port of the Pi manual-retry behavior)",
 	"type": "module",
 	"main": "index.js",

@@ -57,6 +57,41 @@ test('failed and aborted turns permit one followup without duplicating human use
   }
 });
 
+test('Esc before the first step: /retry replays the consumed human request verbatim (live seq 5-8 shape)', () => {
+  const h = harness();
+  const human = { id: 'h1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Count to 40' }] };
+  h.record('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [human] });
+  h.record('turn/start', { turn: 1 });
+  h.record('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] });
+  h.record('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } });
+  assert.equal(h.command().kind, 'success');
+  const sent = h.agent.inbox.nextTurn[0];
+  assert.deepEqual(sent.content, human.content);
+  assert.equal(sent.source.kind, 'dsh-manual-retry');
+});
+
+test('Esc after the request was committed: /retry uses the continue cue, not a duplicate request', () => {
+  const h = harness();
+  const human = { id: 'h1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Count to 40' }] };
+  h.record('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [human] });
+  h.record('turn/start', { turn: 1 });
+  h.record('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] });
+  h.record('user/message', human);
+  h.record('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } });
+  assert.equal(h.command().kind, 'success');
+  assert.match(h.agent.inbox.nextTurn[0].content[0].text, /previous request failed or was interrupted/);
+});
+
+test('canceled (discarded) queued input is not treated as consumed', () => {
+  const h = harness();
+  h.record('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [{ id: 'h1', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] }] });
+  h.record('turn/start', { turn: 1 });
+  h.record('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' });
+  h.record('turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'boom' } } });
+  h.command();
+  assert.match(h.agent.inbox.nextTurn[0].content[0].text, /previous request failed/);
+});
+
 test('completed, output-limit, and blocked turns, busy agent, queued input, arguments and attachments do not retry', () => {
   const h = harness();
   assert.equal(h.command().kind, 'error');

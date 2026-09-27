@@ -119,7 +119,17 @@ export const initialRetryFold = Object.freeze({
 	end: null,
 	errorMessage: null,
 	retryTurn: false,
+	// Mirror of the durable next-turn inbox (id, source kind, content) so a turn
+	// knows which human messages it consumed.
+	queued: Object.freeze([]),
+	// Human messages consumed by the latest turn but never committed as
+	// user/message (abort/error before the first step). /retry replays these.
+	lost: Object.freeze([]),
 });
+
+function consumedHuman(message) {
+	return { id: message.id, content: message.content };
+}
 
 /**
  * Pure projection fold over session events.
@@ -128,15 +138,37 @@ export const initialRetryFold = Object.freeze({
  */
 export function retryFold(state, event) {
 	switch (event.type) {
+		case "agent/inbox/spliced": {
+			const splice = event.data;
+			if (splice?.target !== "next-turn") return state;
+			const queued = state.queued ?? [];
+			const start = Number.isSafeInteger(splice.start) ? splice.start : 0;
+			const removedCount = splice.removedCount ?? 0;
+			const removed = queued.slice(start, start + removedCount);
+			const inserted = (splice.inserted ?? []).map((m) => ({
+				id: String(m.id), kind: m.source?.kind ?? null, content: m.content ?? [],
+			}));
+			const next = queued.toSpliced(start, removedCount, ...inserted);
+			// Removal while a turn is open (not a cancel) = consumed by that turn.
+			const consumed = state.open && splice.outcome !== "canceled"
+				? removed.filter((m) => m.kind === "user").map(consumedHuman)
+				: [];
+			return { ...state, queued: next, lost: consumed.length ? [...(state.lost ?? []), ...consumed] : (state.lost ?? []) };
+		}
 		case "turn/start": {
 			const turn = event.data?.turn;
 			if (typeof turn !== "number") return state;
-			return { turn, open: true, end: null, errorMessage: null, retryTurn: false };
+			return { turn, open: true, end: null, errorMessage: null, retryTurn: false, queued: state.queued ?? [], lost: [] };
 		}
-		case "user/message":
-			return event.data?.source?.kind === "dsh-manual-retry"
-				? { ...state, retryTurn: true }
-				: state;
+		case "user/message": {
+			const id = event.data?.id;
+			const lost = state.lost ?? [];
+			const remaining = id === undefined ? lost : lost.filter((m) => m.id !== id);
+			const retryTurn = state.retryTurn || event.data?.source?.kind === "dsh-manual-retry";
+			return remaining.length === lost.length && retryTurn === state.retryTurn
+				? state
+				: { ...state, retryTurn, lost: remaining };
+		}
 		case "turn/end": {
 			const reason = event.data?.reason;
 			if (!reason || typeof reason.kind !== "string") return state;
@@ -148,6 +180,8 @@ export function retryFold(state, event) {
 				end,
 				retryTurn: state.retryTurn,
 				errorMessage: reason.kind === "error" ? String(reason.error?.message ?? "") : null,
+				queued: state.queued ?? [],
+				lost: state.lost ?? [],
 			};
 		}
 		default:
@@ -226,11 +260,17 @@ function deepFreeze(value) {
  * turn cannot produce two distinct inbox items; plugin notice source so the
  * turn is not rendered as a fresh user prompt.
  */
-export function buildRetryMessage(sessionId, turn, prompt, summary) {
+export function buildRetryMessage(sessionId, turn, prompt, summary, lost = []) {
+	// If the failed turn never committed its human request (Esc/error before the
+	// first step), the model has not seen it: replay the original content
+	// verbatim instead of a "continue from above" cue.
+	const content = lost.length > 0
+		? lost.flatMap((m) => m.content)
+		: [{ type: "text", text: prompt }];
 	return deepFreeze({
 		id: `dsh-manual-retry:retry:${sessionId}:${turn}`,
 		role: "user",
-		content: [{ type: "text", text: prompt }],
+		content: structuredClone(content),
 		source: { kind: "dsh-manual-retry", form: "notice", summary },
 	});
 }

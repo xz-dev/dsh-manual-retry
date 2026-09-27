@@ -46,6 +46,8 @@ const retryFoldSchema = z.object({
 	end: z.string().nullable(),
 	retryTurn: z.boolean(),
 	errorMessage: z.string().nullable(),
+	queued: z.array(z.object({ id: z.string(), kind: z.string().nullable(), content: z.array(z.unknown()) })),
+	lost: z.array(z.object({ id: z.string(), content: z.array(z.unknown()) })),
 });
 
 export function apply(ctx, config = {}) {
@@ -112,7 +114,7 @@ export function apply(ctx, config = {}) {
 
 	ctx.sessionProjections.register({
 		key: "manualRetry",
-		stateVersion: 2,
+		stateVersion: 3,
 		stateSchema: retryFoldSchema,
 		init: () => initialRetryFold,
 		apply: retryFold,
@@ -146,7 +148,7 @@ export function apply(ctx, config = {}) {
 			}
 			submitting.add(agent.id);
 			try {
-				agent.followup(buildRetryMessage(agent.id, decision.turn, resolved.retryPrompt, decision.summary));
+				agent.followup(buildRetryMessage(agent.id, decision.turn, resolved.retryPrompt, decision.summary, state.lost ?? []));
 			} finally {
 				submitting.delete(agent.id);
 			}
